@@ -1,6 +1,4 @@
-import axios from 'axios';
-
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api/v1';
+import api from './api';
 
 export const login = async (username, password) => {
     try {
@@ -8,7 +6,7 @@ export const login = async (username, password) => {
         params.append('username', username);
         params.append('password', password);
         
-        const response = await axios.post(`${API_URL}/auth/login`, params, {
+        const response = await api.post('/auth/login', params, {
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
@@ -16,6 +14,8 @@ export const login = async (username, password) => {
         
         if (response.data.access_token) {
             localStorage.setItem('user', JSON.stringify(response.data));
+            // Set the token in the API client
+            api.defaults.headers.common['Authorization'] = `Bearer ${response.data.access_token}`;
         }
         
         return response.data;
@@ -43,7 +43,7 @@ export const login = async (username, password) => {
 
 export const register = async (userData) => {
     try {
-        const response = await axios.post(`${API_URL}/auth/register`, userData, {
+        const response = await api.post('/auth/register', userData, {
             headers: {
                 'Content-Type': 'application/json'
             }

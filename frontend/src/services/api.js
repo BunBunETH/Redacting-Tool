@@ -4,20 +4,28 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json'
+  }
 });
+
+// Add request interceptor to add /api/v1 prefix to all requests
+api.interceptors.request.use(
+  (config) => {
+    // Add /api/v1 prefix if not already present
+    if (!config.url.startsWith('/api/v1')) {
+      config.url = `/api/v1${config.url}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
 
 // Add a request interceptor to add the auth token to requests
 api.interceptors.request.use(
   (config) => {
-    // Remove any existing /api/v1 prefix to prevent duplication
-    let url = config.url.replace(/^\/?(api\/v1\/?)+/, '');
-    
-    // Add api/v1 prefix if not present
-    if (!url.startsWith('/')) {
-      url = '/' + url;
-    }
-    config.url = '/api/v1' + url;
-    
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
