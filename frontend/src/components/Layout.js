@@ -17,7 +17,7 @@ import {
 import {
   Menu as MenuIcon,
   Dashboard as DashboardIcon,
-  Vault as VaultIcon,
+  Storage as StorageIcon,
   Settings as SettingsIcon,
   Logout as LogoutIcon,
 } from '@mui/icons-material';
@@ -42,7 +42,7 @@ const Layout = ({ children }) => {
 
   const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
-    { text: 'Vault', icon: <VaultIcon />, path: '/vault' },
+    { text: 'Vault', icon: <StorageIcon />, path: '/vault' },
     { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
   ];
 

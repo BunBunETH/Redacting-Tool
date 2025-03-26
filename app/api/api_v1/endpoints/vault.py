@@ -1,91 +1,180 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.core.database import get_db
-from app.services.vault_service import VaultService
+from app.api.deps import get_current_user, get_db
+from app.models.user import User
 from app.models.vault import VaultEntry, VaultFeedback
-from datetime import datetime
+from app.services.vault_service import VaultService
+from app.schemas.vault import VaultEntryCreate, VaultEntryResponse, VaultFeedbackCreate
+import logging
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 vault_service = VaultService()
 
-@router.get("/entries", response_model=List[VaultEntry])
-async def list_vault_entries(
-    conversation_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+@router.post("/entries", response_model=VaultEntryResponse)
+async def create_vault_entry(
+    entry: VaultEntryCreate,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    List vault entries with optional filtering.
+    Create a new vault entry.
     """
-    return await vault_service.list_vault_entries(
-        db,
-        conversation_id=conversation_id,
-        user_id=user_id,
-        page=page,
-        page_size=page_size
-    )
+    try:
+        if not current_user.has_permission("vault:create"):
+            logger.warning(f"User {current_user.username} attempted to create vault entry without permission")
+            raise HTTPException(
+                status_code=403,
+                detail="Not enough permissions"
+            )
+        
+        vault_entry = await vault_service.create_vault_entry(
+            db=db,
+            user_id=current_user.id,
+            **entry.dict()
+        )
+        logger.info(f"Created vault entry {vault_entry.id}")
+        return vault_entry
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating vault entry: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
 
-@router.get("/entries/{vault_link}", response_model=VaultEntry)
+@router.get("/entries/{entry_id}", response_model=VaultEntryResponse)
 async def get_vault_entry(
-    vault_link: str,
+    entry_id: int,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Get a specific vault entry by its secure link.
+    Get a specific vault entry.
     """
-    entry = await vault_service.get_vault_entry(db, vault_link)
-    if not entry:
-        raise HTTPException(status_code=404, detail="Vault entry not found")
-    return entry
+    try:
+        if not current_user.has_permission("vault:read"):
+            logger.warning(f"User {current_user.username} attempted to read vault entry without permission")
+            raise HTTPException(
+                status_code=403,
+                detail="Not enough permissions"
+            )
+        
+        entry = await vault_service.get_vault_entry(db, entry_id)
+        if not entry:
+            logger.warning(f"Vault entry {entry_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Vault entry not found"
+            )
+        
+        logger.info(f"Retrieved vault entry {entry_id}")
+        return entry
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving vault entry: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
 
-@router.post("/entries/{vault_entry_id}/feedback", response_model=VaultFeedback)
-async def add_vault_feedback(
-    vault_entry_id: int,
-    is_positive: bool,
-    feedback_notes: str,
-    reviewed_by: str,
+@router.get("/entries", response_model=List[VaultEntryResponse])
+async def list_vault_entries(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Add feedback for a vault entry.
+    List all vault entries.
     """
-    return await vault_service.add_feedback(
-        db,
-        vault_entry_id=vault_entry_id,
-        is_positive=is_positive,
-        feedback_notes=feedback_notes,
-        reviewed_by=reviewed_by
-    )
+    try:
+        if not current_user.has_permission("vault:read"):
+            logger.warning(f"User {current_user.username} attempted to list vault entries without permission")
+            raise HTTPException(
+                status_code=403,
+                detail="Not enough permissions"
+            )
+        
+        entries = await vault_service.list_vault_entries(
+            db=db,
+            skip=skip,
+            limit=limit
+        )
+        logger.info(f"Retrieved {len(entries)} vault entries")
+        return entries
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing vault entries: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
 
-@router.post("/entries/{vault_entry_id}/archive")
+@router.post("/entries/{entry_id}/feedback")
+async def add_feedback(
+    entry_id: int,
+    feedback: VaultFeedbackCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Add feedback to a vault entry.
+    """
+    try:
+        if not current_user.has_permission("vault:feedback"):
+            logger.warning(f"User {current_user.username} attempted to add feedback without permission")
+            raise HTTPException(
+                status_code=403,
+                detail="Not enough permissions"
+            )
+        
+        await vault_service.add_feedback(
+            db=db,
+            entry_id=entry_id,
+            user_id=current_user.id,
+            **feedback.dict()
+        )
+        logger.info(f"Added feedback to vault entry {entry_id}")
+        return {"status": "success"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding feedback: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
+
+@router.post("/entries/{entry_id}/archive")
 async def archive_vault_entry(
-    vault_entry_id: int,
+    entry_id: int,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Archive a vault entry.
     """
-    success = await vault_service.archive_vault_entry(db, vault_entry_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Vault entry not found")
-    return {"status": "success", "message": "Vault entry archived"}
-
-@router.get("/stats")
-async def get_vault_stats(db: Session = Depends(get_db)):
-    """
-    Get statistics about the vault.
-    """
-    total_entries = db.query(VaultEntry).filter(VaultEntry.is_archived == False).count()
-    total_feedback = db.query(VaultFeedback).count()
-    positive_feedback = db.query(VaultFeedback).filter(VaultFeedback.is_positive == True).count()
-    
-    return {
-        "total_entries": total_entries,
-        "total_feedback": total_feedback,
-        "positive_feedback": positive_feedback,
-        "feedback_ratio": positive_feedback / total_feedback if total_feedback > 0 else 0,
-        "last_updated": datetime.utcnow().isoformat()
-    } 
+    try:
+        if not current_user.has_permission("vault:archive"):
+            logger.warning(f"User {current_user.username} attempted to archive vault entry without permission")
+            raise HTTPException(
+                status_code=403,
+                detail="Not enough permissions"
+            )
+        
+        await vault_service.archive_vault_entry(db, entry_id)
+        logger.info(f"Archived vault entry {entry_id}")
+        return {"status": "success"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error archiving vault entry: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )

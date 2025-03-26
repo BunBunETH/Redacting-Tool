@@ -12,7 +12,7 @@ import {
 } from '@mui/material';
 import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
-import axios from 'axios';
+import api from '../services/api';
 
 const Settings = () => {
   const { user } = useAuth();
@@ -26,7 +26,7 @@ const Settings = () => {
 
   const handleResetApiKey = async () => {
     try {
-      const response = await axios.post('/api/v1/auth/reset-api-key');
+      const response = await api.post('/api/v1/auth/reset-api-key');
       setApiKey(response.data.api_key);
       setShowApiKey(true);
       setSnackbar({

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Grid,
   Paper,
@@ -22,14 +22,26 @@ import {
   CircularProgress,
   IconButton,
   Tooltip,
+  Alert,
+  Divider,
+  Chip,
 } from '@mui/material';
 import {
   Visibility as VisibilityIcon,
   Archive as ArchiveIcon,
   Feedback as FeedbackIcon,
+  VisibilityOff as VisibilityOffIcon,
+  Compare as CompareIcon,
+  Undo as UndoIcon,
 } from '@mui/icons-material';
 import Layout from '../components/Layout';
-import axios from 'axios';
+import { 
+  getVaultEntries, 
+  archiveVaultEntry, 
+  addVaultFeedback,
+  revertRedaction 
+} from '../services/api';
+import { useSnackbar } from 'notistack';
 
 const Vault = () => {
   const [entries, setEntries] = useState([]);
@@ -38,47 +50,167 @@ const Vault = () => {
   const [totalPages, setTotalPages] = useState(1);
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [feedbackDialog, setFeedbackDialog] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [viewMode, setViewMode] = useState('single'); // 'single' or 'compare'
   const [feedback, setFeedback] = useState({
     is_positive: true,
     feedback_notes: '',
   });
+  const [revertDialog, setRevertDialog] = useState(false);
+  const { enqueueSnackbar } = useSnackbar();
 
-  const fetchEntries = async () => {
+  const handleCloseDialog = () => {
+    setFeedbackDialog(false);
+    setShowOriginal(false);
+    setViewMode('single');
+    setSelectedEntry(null);
+    setFeedback({
+      is_positive: true,
+      feedback_notes: '',
+    });
+  };
+
+  const fetchEntries = useCallback(async () => {
     try {
-      const response = await axios.get(`/api/v1/vault/entries?page=${page}&page_size=10`);
-      setEntries(response.data.items);
-      setTotalPages(Math.ceil(response.data.total / 10));
+      setLoading(true);
+      const response = await getVaultEntries(page);
+      setEntries(response.data);
+      setTotalPages(Math.ceil(response.data.length / 10));
     } catch (error) {
       console.error('Error fetching vault entries:', error);
+      enqueueSnackbar('Failed to fetch vault entries', { variant: 'error' });
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, enqueueSnackbar]);
 
   useEffect(() => {
     fetchEntries();
-  }, [page]);
+  }, [fetchEntries]);
 
   const handleFeedbackSubmit = async () => {
     try {
-      await axios.post(`/api/v1/vault/entries/${selectedEntry.id}/feedback`, {
+      await addVaultFeedback(selectedEntry.id, {
         ...feedback,
-        reviewed_by: 'current_user', // This should come from auth context
+        reviewed_by: 'current_user',
       });
-      setFeedbackDialog(false);
+      enqueueSnackbar('Feedback submitted successfully', { variant: 'success' });
+      handleCloseDialog();
       fetchEntries();
     } catch (error) {
       console.error('Error submitting feedback:', error);
+      enqueueSnackbar('Failed to submit feedback', { variant: 'error' });
     }
   };
 
   const handleArchive = async (entryId) => {
     try {
-      await axios.post(`/api/v1/vault/entries/${entryId}/archive`);
+      await archiveVaultEntry(entryId);
+      enqueueSnackbar('Entry archived successfully', { variant: 'success' });
       fetchEntries();
     } catch (error) {
       console.error('Error archiving entry:', error);
+      enqueueSnackbar('Failed to archive entry', { variant: 'error' });
     }
+  };
+
+  const handleToggleViewMode = () => {
+    setViewMode(viewMode === 'single' ? 'compare' : 'single');
+  };
+
+  const handleRevertClick = () => {
+    setRevertDialog(true);
+  };
+
+  const handleRevertConfirm = async () => {
+    try {
+      setLoading(true);
+      await revertRedaction(selectedEntry.id);
+      enqueueSnackbar('Redaction reverted successfully. Original message restored in Intercom.', { 
+        variant: 'success',
+        autoHideDuration: 4000
+      });
+      setRevertDialog(false);
+      handleCloseDialog();
+      fetchEntries(); // Refresh the list
+    } catch (error) {
+      console.error('Error reverting redaction:', error);
+      enqueueSnackbar('Failed to revert redaction. Please try again.', { 
+        variant: 'error',
+        autoHideDuration: 4000
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderMessageContent = () => {
+    if (!selectedEntry) return null;
+
+    if (viewMode === 'compare') {
+      return (
+        <Grid container spacing={2}>
+          <Grid item xs={6}>
+            <Paper 
+              sx={{ 
+                p: 2, 
+                backgroundColor: '#f5f5f5',
+                height: '100%',
+                position: 'relative'
+              }}
+            >
+              <Typography variant="subtitle2" gutterBottom color="text.secondary">
+                Redacted Version
+              </Typography>
+              <Typography variant="body1" component="div" sx={{ whiteSpace: 'pre-wrap' }}>
+                {selectedEntry.redacted_message}
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={6}>
+            <Paper 
+              sx={{ 
+                p: 2, 
+                backgroundColor: '#fff3e0',
+                height: '100%',
+                position: 'relative'
+              }}
+            >
+              <Typography variant="subtitle2" gutterBottom color="text.secondary">
+                Original Version
+              </Typography>
+              <Typography variant="body1" component="div" sx={{ whiteSpace: 'pre-wrap' }}>
+                {selectedEntry.original_message}
+              </Typography>
+            </Paper>
+          </Grid>
+        </Grid>
+      );
+    }
+
+    return (
+      <Paper 
+        sx={{ 
+          p: 2, 
+          backgroundColor: showOriginal ? '#fff3e0' : '#f5f5f5',
+          position: 'relative' 
+        }}
+      >
+        <Typography variant="body1" component="div" sx={{ whiteSpace: 'pre-wrap' }}>
+          {showOriginal ? selectedEntry.original_message : selectedEntry.redacted_message}
+        </Typography>
+        <IconButton
+          onClick={() => setShowOriginal(!showOriginal)}
+          sx={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+          }}
+        >
+          {showOriginal ? <VisibilityOffIcon /> : <VisibilityIcon />}
+        </IconButton>
+      </Paper>
+    );
   };
 
   if (loading) {
@@ -179,23 +311,102 @@ const Vault = () => {
       {/* Feedback Dialog */}
       <Dialog
         open={feedbackDialog}
-        onClose={() => setFeedbackDialog(false)}
-        maxWidth="sm"
+        onClose={handleCloseDialog}
+        maxWidth="md"
         fullWidth
       >
-        <DialogTitle>
-          {selectedEntry ? 'Provide Feedback' : 'View Details'}
+        <DialogTitle sx={{ pb: 1 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6">
+              {selectedEntry ? 'Review Redaction' : 'View Details'}
+            </Typography>
+            <Box>
+              <Tooltip title="Toggle View Mode">
+                <IconButton onClick={handleToggleViewMode} sx={{ mr: 1 }}>
+                  <CompareIcon />
+                </IconButton>
+              </Tooltip>
+              {viewMode === 'single' && (
+                <Tooltip title={showOriginal ? "Show Redacted" : "Show Original"}>
+                  <IconButton onClick={() => setShowOriginal(!showOriginal)}>
+                    {showOriginal ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                  </IconButton>
+                </Tooltip>
+              )}
+            </Box>
+          </Box>
         </DialogTitle>
         <DialogContent>
           {selectedEntry && (
             <>
-              <Box sx={{ mb: 2 }}>
-                <Typography variant="subtitle1">Original Message:</Typography>
-                <Typography variant="body1">{selectedEntry.original_message}</Typography>
+              <Box sx={{ mb: 2, mt: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="subtitle1" gutterBottom>
+                    Message Content:
+                  </Typography>
+                  <Box>
+                    <Chip 
+                      label={selectedEntry.message_type} 
+                      color="primary" 
+                      size="small" 
+                      sx={{ mr: 1 }}
+                    />
+                    <Tooltip title="Revert Redaction in Intercom">
+                      <IconButton
+                        onClick={handleRevertClick}
+                        color="warning"
+                        sx={{ mr: 1 }}
+                      >
+                        <UndoIcon />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                </Box>
+                {renderMessageContent()}
+                {(showOriginal || viewMode === 'compare') && (
+                  <Alert severity="warning" sx={{ mt: 1 }}>
+                    You are viewing sensitive information. Handle with care.
+                  </Alert>
+                )}
               </Box>
               <Box sx={{ mb: 2 }}>
-                <Typography variant="subtitle1">Redacted Message:</Typography>
-                <Typography variant="body1">{selectedEntry.redacted_message}</Typography>
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Revert Redaction
+                  </Typography>
+                  <Typography variant="body2">
+                    If this redaction is incorrect, click the undo button above to revert it. 
+                    This will restore the original message in Intercom and mark this entry as a false positive.
+                  </Typography>
+                </Alert>
+              </Box>
+              <Divider sx={{ my: 2 }} />
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Redaction Details:
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={6}>
+                    <Paper sx={{ p: 2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        Confidence Score
+                      </Typography>
+                      <Typography variant="h6">
+                        {(selectedEntry.confidence_score * 100).toFixed(1)}%
+                      </Typography>
+                    </Paper>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Paper sx={{ p: 2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        Redactions Found
+                      </Typography>
+                      <Typography variant="h6">
+                        {selectedEntry.redaction_count}
+                      </Typography>
+                    </Paper>
+                  </Grid>
+                </Grid>
               </Box>
               <FormControlLabel
                 control={
@@ -206,7 +417,7 @@ const Vault = () => {
                     }
                   />
                 }
-                label="Positive Feedback"
+                label={feedback.is_positive ? "Redaction is correct" : "Redaction needs improvement"}
               />
               <TextField
                 fullWidth
@@ -218,14 +429,55 @@ const Vault = () => {
                   setFeedback({ ...feedback, feedback_notes: e.target.value })
                 }
                 sx={{ mt: 2 }}
+                placeholder="Provide specific feedback about the redaction..."
               />
             </>
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setFeedbackDialog(false)}>Cancel</Button>
-          <Button onClick={handleFeedbackSubmit} variant="contained">
+          <Button 
+            onClick={handleCloseDialog}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleFeedbackSubmit} variant="contained" color="primary">
             Submit Feedback
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Revert Confirmation Dialog */}
+      <Dialog
+        open={revertDialog}
+        onClose={() => setRevertDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Confirm Revert Redaction
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Warning: This action cannot be undone
+            </Typography>
+            <Typography variant="body2">
+              This will restore the original message in Intercom and mark this entry as a false positive.
+              Are you sure you want to proceed?
+            </Typography>
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRevertDialog(false)}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleRevertConfirm} 
+            variant="contained" 
+            color="warning"
+            disabled={loading}
+          >
+            {loading ? <CircularProgress size={24} /> : 'Confirm Revert'}
           </Button>
         </DialogActions>
       </Dialog>

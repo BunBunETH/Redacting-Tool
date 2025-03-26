@@ -3,6 +3,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.api import deps
 from app.core.config import settings
@@ -11,6 +12,13 @@ from app.services.auth_service import AuthService
 
 router = APIRouter()
 auth_service = AuthService()
+
+class UserCreate(BaseModel):
+    username: str
+    email: str
+    password: str
+    full_name: str
+    role: UserRole = UserRole.VIEWER
 
 @router.post("/login")
 async def login(
@@ -51,19 +59,14 @@ async def login(
 
 @router.post("/register")
 async def register(
-    *,
-    db: Session = Depends(deps.get_db),
-    username: str,
-    email: str,
-    password: str,
-    full_name: str,
-    role: UserRole = UserRole.VIEWER
+    user_in: UserCreate,
+    db: Session = Depends(deps.get_db)
 ) -> Any:
     """
     Register new user.
     """
     # Check if user exists
-    user = db.query(User).filter(User.username == username).first()
+    user = db.query(User).filter(User.username == user_in.username).first()
     if user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -73,11 +76,11 @@ async def register(
     # Create new user
     user = await auth_service.create_user(
         db=db,
-        username=username,
-        email=email,
-        password=password,
-        full_name=full_name,
-        role=role
+        username=user_in.username,
+        email=user_in.email,
+        password=user_in.password,
+        full_name=user_in.full_name,
+        role=user_in.role
     )
     
     return {

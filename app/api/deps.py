@@ -10,7 +10,7 @@ from app.core.database import SessionLocal
 from app.models.user import User, UserRole
 from app.services.auth_service import AuthService
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 auth_service = AuthService()
 
 def get_db() -> Generator:

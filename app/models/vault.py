@@ -11,7 +11,7 @@ class VaultEntry(BaseModel):
     original_message = Column(String)
     vault_link = Column(String, unique=True)  # Generated secure link
     is_archived = Column(Boolean, default=False)
-    metadata = Column(JSON)  # Additional context about the redaction
+    entry_metadata = Column(JSON)  # Additional context about the redaction
     
     # Relationships
     message = relationship("Message", backref="vault_entry")
@@ -23,8 +23,9 @@ class VaultFeedback(BaseModel):
     vault_entry_id = Column(Integer, ForeignKey("vault_entries.id"), unique=True)
     is_positive = Column(Boolean)  # True for like, False for dislike
     feedback_notes = Column(String)
-    reviewed_by = Column(String)  # Admin username
+    reviewed_by = Column(String, ForeignKey("users.username"))  # Admin username
     reviewed_at = Column(String)  # ISO timestamp
     
-    # Relationship
-    vault_entry = relationship("VaultEntry", back_populates="feedback") 
+    # Relationships
+    vault_entry = relationship("VaultEntry", back_populates="feedback")
+    reviewer = relationship("User", back_populates="feedback") 

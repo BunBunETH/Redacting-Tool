@@ -1,120 +1,84 @@
 import re
-from typing import List, Dict, Tuple
-import spacy
-from transformers import pipeline
-from app.core.config import settings
+import json
+from typing import List, Dict, Any
+from app.models.detection import DetectionFinding
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DetectionService:
     def __init__(self):
-        # Load SpaCy model
-        self.nlp = spacy.load("en_core_web_sm")
-        
-        # Initialize BERT model for sensitive data detection
-        self.classifier = pipeline(
-            "text-classification",
-            model="bert-base-uncased",
-            device=-1  # Use CPU
-        )
-        
-        # Regex patterns for structured data
         self.patterns = {
-            "email": r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
-            "credit_card": r'\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b',
-            "phone": r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b',
-            "ssn": r'\b\d{3}-\d{2}-\d{4}\b',
-            "private_key": r'-----BEGIN (?:RSA|DSA|EC|OPENSSH) PRIVATE KEY-----',
-            "api_key": r'(?i)(api[_-]?key|apikey|secret)[=:]\s*[\w\-]{20,}'
+            'credit_card': r'\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b',
+            'email': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+            'phone': r'\b\+?1?[-.]?\(?\d{3}\)?[-.]?\d{3}[-.]?\d{4}\b',
+            'ssn': r'\b\d{3}[-]?\d{2}[-]?\d{4}\b',
+            'private_key': r'-----BEGIN\s+PRIVATE\s+KEY-----[^-]+-----END\s+PRIVATE\s+KEY-----',
+            'api_key': r'\b(?:api[_-]?key|token)[_-]?(?:[\w\d]{32}|\w{32,})\b'
         }
         
-        # Custom patterns for Web3/SRP specific data
-        self.web3_patterns = {
-            "eth_address": r'0x[a-fA-F0-9]{40}',
-            "private_key_hex": r'[a-fA-F0-9]{64}',
-            "mnemonic": r'[a-z\s]{10,}'
+        self.masking_rules = {
+            'credit_card': 'XXXX-XXXX-XXXX-****',
+            'email': '[EMAIL_REDACTED]',
+            'phone': '[PHONE_REDACTED]',
+            'ssn': 'XXX-XX-****',
+            'private_key': '[PRIVATE_KEY_REDACTED]',
+            'api_key': '[API_KEY_REDACTED]'
         }
+        
+        logger.info("Detection service initialized with regex patterns")
 
-    def detect_sensitive_data(self, text: str) -> List[Dict]:
+    def detect_sensitive_data(self, text: str) -> List[Dict[str, Any]]:
         """
-        Detect sensitive data in text using both regex and ML approaches.
-        Returns a list of detected sensitive data with their types and positions.
+        Detect sensitive data in text using regex patterns.
         """
         findings = []
         
-        # Check structured data using regex
-        for data_type, pattern in self.patterns.items():
-            matches = re.finditer(pattern, text)
-            for match in matches:
-                findings.append({
-                    "type": data_type,
-                    "value": match.group(),
-                    "start": match.start(),
-                    "end": match.end(),
-                    "confidence": 1.0,
-                    "method": "regex"
-                })
-        
-        # Check Web3 specific data
-        for data_type, pattern in self.web3_patterns.items():
-            matches = re.finditer(pattern, text)
-            for match in matches:
-                findings.append({
-                    "type": f"web3_{data_type}",
-                    "value": match.group(),
-                    "start": match.start(),
-                    "end": match.end(),
-                    "confidence": 1.0,
-                    "method": "regex"
-                })
-        
-        # Use ML model for unstructured data
-        doc = self.nlp(text)
-        for sent in doc.sents:
-            # Use BERT for classification
-            result = self.classifier(sent.text)
-            if result[0]["label"] == "LABEL_1" and result[0]["score"] > settings.MODEL_CONFIDENCE_THRESHOLD:
-                findings.append({
-                    "type": "sensitive_content",
-                    "value": sent.text,
-                    "start": sent.start_char,
-                    "end": sent.end_char,
-                    "confidence": result[0]["score"],
-                    "method": "ml"
-                })
-        
-        return findings
+        try:
+            for pattern_type, pattern in self.patterns.items():
+                matches = re.finditer(pattern, text)
+                for match in matches:
+                    finding = {
+                        'finding_type': pattern_type,
+                        'original_value': match.group(),
+                        'masked_value': self.masking_rules[pattern_type],
+                        'start_position': match.start(),
+                        'end_position': match.end(),
+                        'confidence_score': 100,  # Regex matches are always 100% confident
+                        'detection_method': 'regex',
+                        'finding_metadata': {
+                            'pattern_used': pattern,
+                            'detection_timestamp': None  # Will be set by the database
+                        }
+                    }
+                    findings.append(finding)
+            
+            logger.info(f"Found {len(findings)} sensitive data instances")
+            return findings
+        except Exception as e:
+            logger.error(f"Error detecting sensitive data: {e}")
+            return []
 
-    def mask_sensitive_data(self, text: str, findings: List[Dict]) -> str:
+    def mask_sensitive_data(self, text: str, findings: List[Dict[str, Any]]) -> str:
         """
-        Mask detected sensitive data in the text.
+        Mask sensitive data in text based on findings.
         """
-        masked_text = text
-        # Sort findings by start position in reverse order to avoid index issues
-        sorted_findings = sorted(findings, key=lambda x: x["start"], reverse=True)
-        
-        for finding in sorted_findings:
-            mask = self._get_mask_for_type(finding["type"])
-            masked_text = (
-                masked_text[:finding["start"]] +
-                mask +
-                masked_text[finding["end"]:]
-            )
-        
-        return masked_text
-
-    def _get_mask_for_type(self, data_type: str) -> str:
-        """
-        Get appropriate mask for different types of sensitive data.
-        """
-        masks = {
-            "email": "[email_redacted]",
-            "credit_card": "XXXX-XXXX-XXXX-XXXX",
-            "phone": "(XXX) XXX-XXXX",
-            "ssn": "XXX-XX-XXXX",
-            "private_key": "**********",
-            "api_key": "[API_KEY_REDACTED]",
-            "web3_eth_address": "0x********",
-            "web3_private_key_hex": "[PRIVATE_KEY_REDACTED]",
-            "web3_mnemonic": "[MNEMONIC_REDACTED]",
-            "sensitive_content": "[SENSITIVE_CONTENT_REDACTED]"
-        }
-        return masks.get(data_type, "[REDACTED]") 
+        try:
+            # Sort findings by start position in reverse order
+            findings.sort(key=lambda x: x['start_position'], reverse=True)
+            
+            # Create a mutable version of the text
+            masked_text = list(text)
+            
+            # Replace each finding with its mask
+            for finding in findings:
+                start = finding['start_position']
+                end = finding['end_position']
+                mask = finding['masked_value']
+                masked_text[start:end] = mask
+            
+            logger.info("Successfully masked sensitive data")
+            return ''.join(masked_text)
+        except Exception as e:
+            logger.error(f"Error masking sensitive data: {e}")
+            return text  # Return original text if masking fails 

@@ -20,4 +20,25 @@ class User(BaseModel):
     api_key = Column(String, unique=True, index=True)
     
     # Relationships
-    feedback = relationship("VaultFeedback", back_populates="reviewer") 
+    feedback = relationship("VaultFeedback", back_populates="reviewer")
+
+    def has_permission(self, permission: str) -> bool:
+        """
+        Check if user has a specific permission based on their role.
+        Permissions are mapped to roles as follows:
+        - ADMIN: all permissions
+        - REVIEWER: vault:read, vault:feedback
+        - VIEWER: vault:read
+        """
+        if not self.is_active:
+            return False
+
+        if self.role == UserRole.ADMIN:
+            return True
+
+        role_permissions = {
+            UserRole.REVIEWER: ["vault:read", "vault:feedback"],
+            UserRole.VIEWER: ["vault:read"]
+        }
+
+        return permission in role_permissions.get(self.role, []) 

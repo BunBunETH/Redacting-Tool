@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import axios from 'axios';
+import api from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -17,46 +17,54 @@ export const AuthProvider = ({ children }) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      fetchUser(token);
-    } else {
-      setLoading(false);
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) {
+      try {
+        const userData = JSON.parse(storedUser);
+        setUser(userData.user);
+        // Set the token in the API client
+        api.defaults.headers.common['Authorization'] = `Bearer ${userData.access_token}`;
+      } catch (err) {
+        console.error('Error parsing stored user data:', err);
+        localStorage.removeItem('user');
+      }
     }
+    setLoading(false);
   }, []);
-
-  const fetchUser = async (token) => {
-    try {
-      const response = await axios.get('/api/v1/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setUser(response.data);
-    } catch (err) {
-      localStorage.removeItem('token');
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const login = async (username, password) => {
     try {
-      const response = await axios.post('/api/v1/auth/login', {
-        username,
-        password
+      const params = new URLSearchParams();
+      params.append('username', username);
+      params.append('password', password);
+      
+      const response = await api.post('/api/v1/auth/login', params, {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
       });
-      const { access_token, user } = response.data;
-      localStorage.setItem('token', access_token);
-      setUser(user);
-      return user;
+      
+      const { access_token, user: userData } = response.data;
+      
+      // Store both token and user data
+      const userInfo = { user: userData, access_token };
+      localStorage.setItem('user', JSON.stringify(userInfo));
+      
+      // Set the token in the API client
+      api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+      
+      setUser(userData);
+      return userData;
     } catch (err) {
+      console.error('Login error:', err);
       setError(err.response?.data?.detail || 'Login failed');
       throw err;
     }
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    delete api.defaults.headers.common['Authorization'];
     setUser(null);
     setError(null);
   };
